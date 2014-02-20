@@ -25,6 +25,7 @@ import Data.Maybe (fromMaybe)
 import Data.Monoid
 import Data.Serialize.Get
 import Data.Traversable (traverse)
+import qualified Data.Packer as Packer
 import qualified Data.TypeLevel as Tl
 
 import GHC.Generics
@@ -34,10 +35,10 @@ import Data.ProtocolBuffers.Wire
 
 -- |
 -- Decode a Protocol Buffers message.
-decodeMessage :: Decode a => Get a
+decodeMessage :: Decode a => Packer.Unpacking a
 {-# INLINE decodeMessage #-}
 decodeMessage = decode =<< HashMap.map reverse <$> go HashMap.empty where
-  go :: HashMap Tag [WireField] -> Get (HashMap Tag [WireField])
+  go :: HashMap Tag [WireField] -> Packer.Unpacking (HashMap Tag [WireField])
   go msg = do
     mfield <- Just <$> getWireField <|> return Nothing
     case mfield of
@@ -46,20 +47,16 @@ decodeMessage = decode =<< HashMap.map reverse <$> go HashMap.empty where
 
 -- |
 -- Decode a Protocol Buffers message prefixed with a varint encoded 32-bit integer describing it's length.
-decodeLengthPrefixedMessage :: Decode a => Get a
+decodeLengthPrefixedMessage :: Decode a => Packer.Unpacking a
 {-# INLINE decodeLengthPrefixedMessage #-}
 decodeLengthPrefixedMessage = do
-  len :: Int64 <- getVarInt
-  bs <- getBytes $ fromIntegral len
-  case runGetState decodeMessage bs 0 of
-    Right (val, bs')
-      | B.null bs' -> return val
-      | otherwise  -> fail $ "Unparsed bytes leftover in decodeLengthPrefixedMessage: " ++ show (B.length bs')
-    Left err  -> fail err
+  len <- getVarInt
+  bs <- Packer.getBytes len
+  return $ Packer.runUnpacking (Packer.isolate len decodeMessage) bs
 
 class Decode (a :: *) where
-  decode :: HashMap Tag [WireField] -> Get a
-  default decode :: (Generic a, GDecode (Rep a)) => HashMap Tag [WireField] -> Get a
+  decode :: HashMap Tag [WireField] -> Packer.Unpacking a
+  default decode :: (Generic a, GDecode (Rep a)) => HashMap Tag [WireField] -> Packer.Unpacking a
   decode = fmap to . gdecode
 
 -- | Untyped message decoding, @ 'decode' = 'id' @
@@ -67,7 +64,7 @@ instance Decode (HashMap Tag [WireField]) where
   decode = pure
 
 class GDecode (f :: * -> *) where
-  gdecode :: HashMap Tag [WireField] -> Get (f a)
+  gdecode :: HashMap Tag [WireField] -> Packer.Unpacking (f a)
 
 instance GDecode a => GDecode (M1 i c a) where
   gdecode = fmap M1 . gdecode
@@ -82,7 +79,7 @@ fieldDecode
   :: forall a b i n p . (DecodeWire a, Monoid a, Tl.Nat n)
   => (a -> b)
   -> HashMap Tag [WireField]
-  -> Get (K1 i (Field n b) p)
+  -> Packer.Unpacking (K1 i (Field n b) p)
 {-# INLINE fieldDecode #-}
 fieldDecode c msg =
   let tag = fromIntegral $ Tl.toInt (undefined :: n)

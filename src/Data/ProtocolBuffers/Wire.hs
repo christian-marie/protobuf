@@ -39,6 +39,7 @@ import qualified Data.Text.Encoding as T
 import Data.Typeable
 import Data.Word
 import Data.Binary.IEEE754 (wordToDouble, wordToFloat)
+import qualified Data.Packer as Packer
 
 import Data.ProtocolBuffers.Types
 
@@ -58,20 +59,20 @@ data WireField
   | Fixed32Field   {-# UNPACK #-} !Tag {-# UNPACK #-} !Word32 -- ^ For: fixed32, sfixed32, float
     deriving (Eq, Ord, Show, Typeable)
 
-getVarintPrefixedBS :: Get ByteString
-getVarintPrefixedBS = getBytes =<< getVarInt
+getVarintPrefixedBS :: Packer.Unpacking ByteString
+getVarintPrefixedBS = Packer.getBytes =<< getVarInt
 
-getWireField :: Get WireField
+getWireField :: Packer.Unpacking WireField
 getWireField = do
   wireTag <- getVarInt
   let tag = wireTag `shiftR` 3
   case wireTag .&. 7 of
     0 -> VarintField    tag <$> getVarInt
-    1 -> Fixed64Field   tag <$> getWord64le
+    1 -> Fixed64Field   tag <$> Packer.getWord64LE
     2 -> DelimitedField tag <$> getVarintPrefixedBS
     3 -> return $! StartField tag
     4 -> return $! EndField   tag
-    5 -> Fixed32Field   tag <$> getWord32le
+    5 -> Fixed32Field   tag <$> Packer.getWord32LE
     x -> fail $ "Wire type out of range: " ++ show x
 
 putWireField :: WireField -> Put
@@ -88,10 +89,10 @@ putWireTag tag typ
   | tag  > 0x1FFFFFFF = fail $ "Wire tag out of range: "  ++ show tag
   | otherwise         = fail $ "Wire type out of range: " ++ show typ
 
-getVarInt :: (Integral a, Bits a) => Get a
+getVarInt :: (Integral a, Bits a) => Packer.Unpacking a
 getVarInt = go 0 0 where
   go n !val = do
-    b <- getWord8
+    b <- Packer.getWord8
     if testBit b 7
       then go (n+7) (val .|. (fromIntegral (b .&. 0x7F) `shiftL` n))
       else return $! val .|. (fromIntegral b `shiftL` n)
@@ -133,7 +134,7 @@ class EncodeWire a where
   encodeWire :: Tag -> a -> Put
 
 class DecodeWire a where
-  decodeWire :: WireField -> Get a
+  decodeWire :: WireField -> Packer.Unpacking a
 
 deriving instance EncodeWire a => EncodeWire (Always (Value a))
 deriving instance EncodeWire a => EncodeWire (Last (Value a))
@@ -278,12 +279,12 @@ instance DecodeWire T.Text where
       Left err  -> fail $ "Decoding failed: " ++ show err
   decodeWire _ = empty
 
-decodePackedList :: Get a -> WireField -> Get [a]
+decodePackedList :: Packer.Unpacking a -> WireField -> Packer.Unpacking [a]
 {-# INLINE decodePackedList #-}
 decodePackedList g (DelimitedField _ bs) =
-  case runGet (many g) bs of
+  case Packer.tryUnpacking (many g) bs of
     Right val -> return val
-    Left err  -> fail err
+    Left err  -> fail $ show err
 decodePackedList _ _ = empty
 
 -- |
@@ -358,7 +359,7 @@ instance EncodeWire (PackedList (Value (Fixed Word32))) where
 
 instance DecodeWire (PackedList (Value (Fixed Word32))) where
   decodeWire x = do
-    xs <- decodePackedList getWord32le x
+    xs <- decodePackedList Packer.getWord32LE x
     return . PackedList $ Value . Fixed <$> xs
 
 instance EncodeWire (PackedList (Value (Fixed Word64))) where
@@ -368,7 +369,7 @@ instance EncodeWire (PackedList (Value (Fixed Word64))) where
 
 instance DecodeWire (PackedList (Value (Fixed Word64))) where
   decodeWire x = do
-    xs <- decodePackedList getWord64le x
+    xs <- decodePackedList Packer.getWord64LE x
     return . PackedList $ Value . Fixed <$> xs
 
 instance EncodeWire (PackedList (Value (Fixed Int32))) where
@@ -378,7 +379,7 @@ instance EncodeWire (PackedList (Value (Fixed Int32))) where
 
 instance DecodeWire (PackedList (Value (Fixed Int32))) where
   decodeWire x = do
-    xs <- decodePackedList getWord32le x
+    xs <- decodePackedList Packer.getWord32LE x
     return . PackedList $ Value . Fixed . fromIntegral <$> xs
 
 instance EncodeWire (PackedList (Value (Fixed Int64))) where
@@ -388,7 +389,7 @@ instance EncodeWire (PackedList (Value (Fixed Int64))) where
 
 instance DecodeWire (PackedList (Value (Fixed Int64))) where
   decodeWire x = do
-    xs <- decodePackedList getWord64le x
+    xs <- decodePackedList Packer.getWord64LE x
     return . PackedList $ Value . Fixed . fromIntegral <$> xs
 
 instance EncodeWire (PackedList (Value Float)) where
@@ -397,7 +398,7 @@ instance EncodeWire (PackedList (Value Float)) where
 
 instance DecodeWire (PackedList (Value Float)) where
   decodeWire x = do
-    xs <- decodePackedList getFloat32le x
+    xs <- decodePackedList Packer.getFloat32LE x
     return . PackedList $ Value <$> xs
 
 instance EncodeWire (PackedList (Value Double)) where
@@ -406,7 +407,7 @@ instance EncodeWire (PackedList (Value Double)) where
 
 instance DecodeWire (PackedList (Value Double)) where
   decodeWire x = do
-    xs <- decodePackedList getFloat64le x
+    xs <- decodePackedList Packer.getFloat64LE x
     return . PackedList $ Value <$> xs
 
 instance EncodeWire (PackedList (Value Bool)) where

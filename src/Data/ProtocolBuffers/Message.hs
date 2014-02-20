@@ -19,6 +19,7 @@ import Data.Foldable
 import Data.Monoid
 import Data.Serialize.Get
 import Data.Serialize.Put
+import qualified Data.Packer as Packer
 import Data.Traversable
 import qualified Data.TypeLevel as Tl
 
@@ -160,7 +161,7 @@ instance (Foldable f, Encode m) => EncodeWire (f (Message m)) where
 
 instance Decode m => DecodeWire (Message m) where
   decodeWire (DelimitedField _ bs) =
-    case runGet decodeMessage bs of
+    case Packer.tryUnpacking decodeMessage bs of
       Right val -> pure $ Message val
       Left err  -> fail $ "Embedded message decoding failed: " ++ show err
   decodeWire _ = empty

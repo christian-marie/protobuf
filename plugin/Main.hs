@@ -24,6 +24,7 @@ import GHC.Generics
 import Language.Haskell.Exts
 import Language.Haskell.Exts.Pretty (prettyPrint)
 import Language.Haskell.Exts.SrcLoc (noLoc)
+import qualified Data.Packer as Packer
 
 data FieldDescriptorProto_Type
   = TYPE_DOUBLE
@@ -209,11 +210,11 @@ getCodeFor val = traceShow val CodeGeneratorResponse
   }
 
 main :: IO ()
-main = Bl.interact $ \ input ->
-  runPutLazy . encodeMessage $
-    case runGetLazy decodeMessage input of
+main = B.interact $ \input ->
+  runPut . encodeMessage $
+    case Packer.tryUnpacking decodeMessage input of
       Right val -> getCodeFor val
       Left  err -> CodeGeneratorResponse
-       { errorStr = putField $ Just err
+       { errorStr = putField $ Just $ show err
        , responseFiles = putField []
        }
